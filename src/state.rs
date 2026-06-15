@@ -208,7 +208,6 @@ impl State {
     }
 
     pub fn tags_updated(&mut self, conn: &mut Connection<Self>, output: Option<WlOutput>) {
-        println!("tags-updated");
         self.for_each_bar(output, |bar, ss| {
             bar.set_tags(ss.wm_info_provider.get_tags(&bar.output));
             bar.frame(conn, ss);
