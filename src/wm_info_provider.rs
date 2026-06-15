@@ -27,6 +27,11 @@ mod niri;
 #[cfg(feature = "niri")]
 pub use niri::*;
 
+#[cfg(feature = "mango")]
+mod mango;
+#[cfg(feature = "mango")]
+pub use mango::*;
+
 pub trait WmInfoProvider: Any {
     fn register(&self, _: &mut EventLoop) {}
 
@@ -68,6 +73,11 @@ pub fn bind(conn: &mut Connection<State>, config: &WmConfig) -> Box<dyn WmInfoPr
     #[cfg(feature = "niri")]
     if let Some(niri) = NiriInfoProvider::new() {
         return Box::new(niri);
+    }
+
+    #[cfg(feature = "mango")]
+    if let Some(mango) = MangoInfoProvider::new() {
+        return Box::new(mango);
     }
 
     Box::new(DummyInfoProvider)

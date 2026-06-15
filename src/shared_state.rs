@@ -36,4 +36,8 @@ impl SharedState {
     pub fn get_niri(&mut self) -> Option<&mut wm_info_provider::NiriInfoProvider> {
         self.downcast_provider()
     }
+    #[cfg(feature = "mango")]
+    pub fn get_mango(&mut self) -> Option<&mut wm_info_provider::MangoInfoProvider> {
+        self.downcast_provider()
+    }
 }
