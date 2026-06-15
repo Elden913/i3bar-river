@@ -12,7 +12,7 @@ use crate::utils::read_to_vec;
 pub struct MangoInfoProvider {
     mmsg_sock: UnixStream,
     mmsg_buf: Vec<u8>,
-    all_tags: Vec<MangoTagsContainer>,
+    all_monitors: Vec<MangoMonitor>,
 }
 
 #[derive(serde::Deserialize, Debug, Clone)]
@@ -24,21 +24,25 @@ struct MangoTag {
 }
 
 #[derive(serde::Deserialize, Debug, Clone)]
-struct MangoTagsContainer {
-    monitor: String,
+struct MangoMonitor {
+    name: String,
+    active: bool,
     tags: Vec<MangoTag>,
+    layout_symbol: String,
 }
+
+
 
 #[derive(serde::Deserialize, Debug)]
 struct MangoIpc {
-    all_tags: Vec<MangoTagsContainer>,
+    monitors: Vec<MangoMonitor>,
 }
 
 impl MangoInfoProvider {
     pub fn new() -> Option<Self> {
         let child = Command::new("/usr/bin/mmsg")
             .arg("watch")
-            .arg("all-tags")
+            .arg("all-monitors")
             .stdout(Stdio::piped())
             .spawn().ok()?;
         let stdout = child.stdout.expect("couldn't get stdout");
@@ -47,7 +51,7 @@ impl MangoInfoProvider {
         Some(Self {
             mmsg_sock: sock,
             mmsg_buf: Vec::new(),
-            all_tags: Vec::new(),
+            all_monitors: Vec::new(),
         })
     }
     fn next_event(&mut self) -> io::Result<MangoIpc> {
@@ -67,14 +71,23 @@ impl MangoInfoProvider {
     }
 }
 
+
+
 impl WmInfoProvider for MangoInfoProvider {
     fn register(&self, ev: &mut EventLoop) {
+
         ev.register_with_fd(self.mmsg_sock.as_raw_fd(), |ctx| {
             loop {
-                match ctx.state.shared_state.get_mango().unwrap().next_event() {
+                let mango = ctx.state.shared_state.get_mango().unwrap();
+                let mut layout_updated = false;
+                match mango.next_event() {
                     Ok(event) => {
-                        ctx.state.shared_state.get_mango().unwrap().all_tags = event.all_tags;
-                        ctx.state.tags_updated(ctx.conn, None);
+                        if let Some(i) = event.monitors.iter().position(|m| m.active) {
+                            if mango.all_monitors.get(i).map(|m| &m.layout_symbol) != event.monitors.get(i).map(|m| &m.layout_symbol) {
+                                layout_updated = true;
+                            }
+                        }
+                        mango.all_monitors = event.monitors;
                     }
                     Err(e) if e.kind() == io::ErrorKind::WouldBlock => break,
                     Err(e) => {
@@ -82,21 +95,21 @@ impl WmInfoProvider for MangoInfoProvider {
                         return Ok(event_loop::Action::Unregister);
                     }
                 }
+                ctx.state.tags_updated(ctx.conn, None);
+                if layout_updated {
+                    ctx.state.layout_name_updated(ctx.conn, None);
+                }
             }
             Ok(event_loop::Action::Keep)
         });
     }
     fn get_tags(&self, output: &Output) -> Vec<Tag> {
-        self.all_tags
+        self.all_monitors
             .iter()
-            .find(|c| c.monitor == output.name)
-            .map_or_else(
-                || {
-                    eprintln!("Couldn't find tags for monitor {}", output.name);
-                    Vec::new()
-                },
-                |container| {
-                    container
+            .find(|c| c.name == output.name)
+            .map_or_default(
+                |monitor| {
+                    monitor
                         .tags
                         .iter()
                         .enumerate()
@@ -111,17 +124,39 @@ impl WmInfoProvider for MangoInfoProvider {
                 },
             )
     }
+    // TODO
+    fn get_layout_name(&self, output: &Output) -> Option<String> {
+        // self.layout_symbol.clone()
+        self.all_monitors
+            .iter()
+            .find(|c| c.name == output.name)
+            .map_or_else(
+                || {
+                    eprintln!("Couldn't find layout_name for monitor {}", output.name);
+                    None
+                },
+                |monitor| {
+                    Some(monitor.layout_symbol.clone())
+                })
+    }
     fn get_mode_name(&self, _: &Output) -> Option<String> {
         None
     }
 
     fn click_on_tag(
         &mut self,
-        _conn: &mut Connection<State>,
+        conn: &mut Connection<State>,
         _output: &Output,
         _seat: WlSeat,
-        _tag_id: Option<u32>,
+        tag_id: Option<u32>,
         _btn: PointerBtn,
     ) {
+        if let Some(id) = tag_id {
+            let _ = Command::new("/usr/bin/mmsg")
+                .arg("dispatch")
+                .arg(format!("view,{}", id))
+                .stdout(Stdio::piped())
+                .spawn();
+        }
     }
 }
